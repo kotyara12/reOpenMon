@@ -53,7 +53,7 @@ bool omSend(om_ctrl_t * omController, char * fields);
 - https://github.com/kotyara12/rWiFi32
 
 ------------------------------
-<b>Parameters: / Параметры:</b>
+<b>Parameters / Параметры:</b>
 
 <i>// Enable sending data to open-monitoring.online</i><br/>
 <i>// Включить отправку данных на open-monitoring.online</i><br/>
