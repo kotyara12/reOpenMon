@@ -11,16 +11,25 @@
 #include "rLedSys32.h"
 #include "rWiFi32.h"
 
+#define API_OPENMON_HOST "open-monitoring.online"
+#define API_OPENMON_PORT 80
+#define API_OPENMON_SEND_PATH "/get"
+#define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
+
+#define OPENMON_QUEUE_ITEM_SIZE sizeof(om_ctrl_t*)
+
 TaskHandle_t _omTask;
 QueueHandle_t _omQueue = NULL;
 
 static const char* tagOM = "OpenMon";
 static const char* omTaskName = "openMon";
 
-#define API_OPENMON_HOST "open-monitoring.online"
-#define API_OPENMON_PORT 80
-#define API_OPENMON_SEND_PATH "/get"
-#define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
+#if CONFIG_OPENMON_SIATIC_ALLICATION
+StaticQueue_t _omQueueBuffer;
+StaticTask_t _omTaskBuffer;
+StackType_t _omTaskStack[CONFIG_OPENMON_STACK_SIZE];
+uint8_t _omQueueStorage [CONFIG_OPENMON_QUEUE_SIZE * OPENMON_QUEUE_ITEM_SIZE];
+#endif // CONFIG_OPENMON_SIATIC_ALLICATION
 
 bool omSendFailed = false;
 
@@ -235,12 +244,15 @@ bool omTaskResume()
   };
 }
 
-
 bool omTaskCreate() 
 {
   if (_omTask == NULL) {
     if (_omQueue == NULL) {
-      _omQueue = xQueueCreate(CONFIG_OPENMON_QUEUE_SIZE, sizeof(om_ctrl_t*));
+      #if CONFIG_OPENMON_SIATIC_ALLICATION
+      _omQueue = xQueueCreateStatic(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE, &(_omQueueStorage[0]), &_omQueueBuffer);
+      #else
+      _omQueue = xQueueCreate(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE);
+      #endif // CONFIG_OPENMON_SIATIC_ALLICATION
       if (_omQueue == NULL) {
         rloga_e("Failed to create a queue for sending data to OpenMonitoring!");
         ledSysStateSet(SYSLED_ERROR, false);
@@ -248,7 +260,11 @@ bool omTaskCreate()
       };
     };
     
+    #if CONFIG_OPENMON_SIATIC_ALLICATION
+    _omTask = xTaskCreateStaticPinnedToCore(omTaskExec, omTaskName, CONFIG_OPENMON_STACK_SIZE, NULL, CONFIG_OPENMON_PRIORITY, _omTaskStack, &_omTaskBuffer, CONFIG_OPENMON_CORE); 
+    #else
     xTaskCreatePinnedToCore(omTaskExec, omTaskName, CONFIG_OPENMON_STACK_SIZE, NULL, CONFIG_OPENMON_PRIORITY, &_omTask, CONFIG_OPENMON_CORE); 
+    #endif // CONFIG_OPENMON_SIATIC_ALLICATION
     if (_omTask == NULL) {
       vQueueDelete(_omQueue);
       rloga_e("Failed to create task for sending data to OpenMonitoring!");
