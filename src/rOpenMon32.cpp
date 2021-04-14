@@ -24,12 +24,12 @@ QueueHandle_t _omQueue = NULL;
 static const char* tagOM = "OpenMon";
 static const char* omTaskName = "openMon";
 
-#if CONFIG_OPENMON_SIATIC_ALLICATION
+#if CONFIG_OPENMON_STATIC_ALLOCATION
 StaticQueue_t _omQueueBuffer;
 StaticTask_t _omTaskBuffer;
 StackType_t _omTaskStack[CONFIG_OPENMON_STACK_SIZE];
 uint8_t _omQueueStorage [CONFIG_OPENMON_QUEUE_SIZE * OPENMON_QUEUE_ITEM_SIZE];
-#endif // CONFIG_OPENMON_SIATIC_ALLICATION
+#endif // CONFIG_OPENMON_STATIC_ALLOCATION
 
 bool omSendFailed = false;
 
@@ -248,11 +248,11 @@ bool omTaskCreate()
 {
   if (_omTask == NULL) {
     if (_omQueue == NULL) {
-      #if CONFIG_OPENMON_SIATIC_ALLICATION
+      #if CONFIG_OPENMON_STATIC_ALLOCATION
       _omQueue = xQueueCreateStatic(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE, &(_omQueueStorage[0]), &_omQueueBuffer);
       #else
       _omQueue = xQueueCreate(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE);
-      #endif // CONFIG_OPENMON_SIATIC_ALLICATION
+      #endif // CONFIG_OPENMON_STATIC_ALLOCATION
       if (_omQueue == NULL) {
         rloga_e("Failed to create a queue for sending data to OpenMonitoring!");
         ledSysStateSet(SYSLED_ERROR, false);
@@ -260,11 +260,11 @@ bool omTaskCreate()
       };
     };
     
-    #if CONFIG_OPENMON_SIATIC_ALLICATION
+    #if CONFIG_OPENMON_STATIC_ALLOCATION
     _omTask = xTaskCreateStaticPinnedToCore(omTaskExec, omTaskName, CONFIG_OPENMON_STACK_SIZE, NULL, CONFIG_OPENMON_PRIORITY, _omTaskStack, &_omTaskBuffer, CONFIG_OPENMON_CORE); 
     #else
     xTaskCreatePinnedToCore(omTaskExec, omTaskName, CONFIG_OPENMON_STACK_SIZE, NULL, CONFIG_OPENMON_PRIORITY, &_omTask, CONFIG_OPENMON_CORE); 
-    #endif // CONFIG_OPENMON_SIATIC_ALLICATION
+    #endif // CONFIG_OPENMON_STATIC_ALLOCATION
     if (_omTask == NULL) {
       vQueueDelete(_omQueue);
       rloga_e("Failed to create task for sending data to OpenMonitoring!");
