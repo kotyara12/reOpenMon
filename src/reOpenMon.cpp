@@ -5,8 +5,8 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include "rLog.h"
+#include "rStrings.h"
 #include "esp_http_client.h"
-#include "reStrings.h"
 #include "reEsp32.h"
 #include "reLedSys.h"
 #include "reWiFi.h"
