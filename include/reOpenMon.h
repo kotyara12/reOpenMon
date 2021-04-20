@@ -6,8 +6,8 @@
    kotyara12@yandex.ru | https://kotyara12.ru | tg: @kotyara1971
 */
 
-#ifndef __ROPENMON32_H__
-#define __ROPENMON32_H__
+#ifndef __RE_OPENMON_H__
+#define __RE_OPENMON_H__
 
 #include <stddef.h>
 #include <sys/types.h>
@@ -73,4 +73,4 @@ bool omSend(om_ctrl_t * omController, char * fields);
 }
 #endif
 
-#endif // __ROPENMON32_H__
+#endif // __RE_OPENMON_H__

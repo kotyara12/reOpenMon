@@ -1,4 +1,4 @@
-#include "rOpenMon32.h"
+#include "reOpenMon.h"
 #include "project_config.h"
 #include <cstring>
 #include <stdio.h>
@@ -6,10 +6,10 @@
 #include <stdlib.h>
 #include "rLog.h"
 #include "esp_http_client.h"
-#include "rStrings.h"
-#include "rEsp32.h"
-#include "rLedSys32.h"
-#include "rWiFi32.h"
+#include "reStrings.h"
+#include "reEsp32.h"
+#include "reLedSys.h"
+#include "reWiFi.h"
 
 #define API_OPENMON_HOST "open-monitoring.online"
 #define API_OPENMON_PORT 80

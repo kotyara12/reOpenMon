@@ -1,4 +1,4 @@
-# rOpenMon32 for ESP32
+# reOpenMon for ESP32
 
 <b>EN</b>: Sending sensor data to http://open-monitoring.online/ with a specified interval and sending queue. For ESP32 only, since it was released as a FreeRTOS task and on ESP32-specific functions. Controller field values (data) are passed to the queue as a string (char*), which is automatically deleted after sending. That is, to send, you must place a line with data on the heap, and then send it to the library queue.
 
@@ -8,8 +8,7 @@ Controller parameters must be set in "project_config.h" (see below for descripti
 
 Параметры контроллера должны быть заданы в "project_config.h" (описание см. ниже)
 
-------------------------------
-<b>Using / Использование:</b>
+## Using / Использование:
 
 <i>// Task management: create, suspend, resume and delete</i><br/>
 <i>// Управление задачей: создание, приостановка, восстановление и удаление</i><br/>
@@ -43,17 +42,15 @@ void omFreeController(om_ctrl_t * omController);
 
 bool omSend(om_ctrl_t * omController, char * fields);
 
-------------------------------
-<b>Dependencies / Зависимости:</b>
+## Dependencies / Зависимости:
 - esp_http_client.h (ESP-IDF)
 - https://github.com/kotyara12/rLog
 - https://github.com/kotyara12/rStrings
-- https://github.com/kotyara12/rEsp32
-- https://github.com/kotyara12/rLed32
-- https://github.com/kotyara12/rWiFi32
+- https://github.com/kotyara12/reEsp32
+- https://github.com/kotyara12/reLed
+- https://github.com/kotyara12/reWiFi
 
-------------------------------
-<b>Parameters / Параметры:</b>
+## Parameters / Параметры:
 
 <i>// Enable sending data to open-monitoring.online</i><br/>
 <i>// Включить отправку данных на open-monitoring.online</i><br/>
