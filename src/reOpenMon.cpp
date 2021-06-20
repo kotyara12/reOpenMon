@@ -8,7 +8,9 @@
 #include "rStrings.h"
 #include "esp_http_client.h"
 #include "reEsp32.h"
+#include "reLed.h"
 #include "reLedSys.h"
+#include "rePing.h"
 #include "reWiFi.h"
 
 #define API_OPENMON_HOST "open-monitoring.online"
@@ -178,8 +180,11 @@ void omProcessQueue(TickType_t xTicksToWait)
     // Trying to send a message to the OpenMonitoring API
     uint16_t tryAttempt = 1;
     bool resAttempt = false;
-    do 
-    {
+    do {
+      // Checking Internet and host availability
+      checkHost(API_OPENMON_HOST, tryAttempt > 1, tagOM, SYSLED_OTHER_PUB_ERROR, CONFIG_MESSAGE_TG_HOST_AVAILABLE, CONFIG_MESSAGE_TG_HOST_UNAVAILABLE, 
+        CONFIG_HOST_PING_SESSION_COUNT, CONFIG_HOST_PING_SESSION_INTERVAL, CONFIG_HOST_PING_SESSION_TIMEOUT, CONFIG_HOST_PING_SESSION_DATASIZE);
+
       // Trying to send a message to the OpenMonitoring API
       resAttempt = omSendEx(omController);
       if (resAttempt) {
