@@ -132,7 +132,7 @@ void omFreeController(om_ctrl_t * omController)
 
 bool omSend(om_ctrl_t * omController, char * fields)
 {
-  if ((omController) && (fields)) {
+  if ((_omQueue) && (omController) && (omController->lock) && (fields)) {
     // Blocking data from changing
     if (xSemaphoreTake(omController->lock, CONFIG_OPENMON_QUEUE_WAIT / portTICK_RATE_MS) == pdPASS) {
       // If there was any data in the send queue, delete it
@@ -149,7 +149,7 @@ bool omSend(om_ctrl_t * omController, char * fields)
       xSemaphoreGive(omController->lock);
 
       // We add a message to the queue so as not to delay the calling thread in case of problems with sending
-      if (xQueueSend(_omQueue, &omController, portMAX_DELAY) == pdPASS) {
+      if (xQueueSend(_omQueue, &omController, CONFIG_OPENMON_QUEUE_WAIT / portTICK_RATE_MS) == pdPASS) {
         return true;
       }
       else {
