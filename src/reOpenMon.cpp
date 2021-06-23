@@ -12,16 +12,35 @@
 #include "reLedSys.h"
 #include "rePing.h"
 #include "reWiFi.h"
+#include "sys/queue.h"
 
 #define API_OPENMON_HOST "open-monitoring.online"
 #define API_OPENMON_PORT 80
 #define API_OPENMON_SEND_PATH "/get"
 #define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
 
-#define OPENMON_QUEUE_ITEM_SIZE sizeof(om_ctrl_t*)
+typedef struct {
+  uint32_t id;
+  char key[OPENMON_TOKEN_LENGTH];
+  time_t last_send;
+  char* data;
+  SLIST_ENTRY(omController_t) next;
+} omController_t;
+typedef struct omController_t *omControllerHandle_t;
+
+SLIST_HEAD(omHead_t, omController_t);
+typedef struct omHead_t *omHeadHandle_t;
+
+typedef struct {
+  uint32_t id;
+  char* data;
+} omQueueItem_t;  
+
+#define OPENMON_QUEUE_ITEM_SIZE sizeof(omQueueItem_t*)
 
 TaskHandle_t _omTask;
-QueueHandle_t _omQueue = NULL;
+QueueHandle_t _omQueue = nullptr;
+omHeadHandle_t _omControllers = nullptr;
 
 static const char* tagOM = "OpenMon";
 static const char* omTaskName = "openMon";
@@ -96,6 +115,94 @@ bool omSendEx(om_ctrl_t * omController)
   if (get_request) free(get_request);
   return _result;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------- Controller list -----------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+bool omControllersInit()
+{
+  _omControllers = new omHead_t;
+  if (_omControllers) {
+    SLIST_INIT(_omControllers);
+  };
+  return (_omControllers);
+}
+
+omControllerHandle_t omControllerFind(uint32_t id)
+{
+  mqttPubHandle_t item;
+  SLIST_FOREACH(item, outbox, next) {
+    if (strcasecmp(item->topic, msg->topic) == 0) {
+      return item;
+    }
+  }
+  return NULL;
+} 
+
+bool mqttOutboxPublish(mqttOutboxHandle_t outbox)
+{
+  mqttPubHandle_t item;
+  item = STAILQ_FIRST(outbox);
+  if (item) {
+    rlog_v(tagMQTTQ, "Processing outbox message \"%s\" [ %d ]", item->topic, strlen(item->payload));
+    ledSysOn(true);
+    bool send = false;
+    if (item->payload) {
+      send = esp_mqtt_publish(item->topic, item->payload, item->qos, item->retained);
+    } else {
+      send = esp_mqtt_publish(item->topic, "", item->qos, item->retained);
+    };
+    ledSysOff(true);
+    if (send) {
+      // Removing a message from the send queue
+      STAILQ_REMOVE(outbox, item, mqttPub_t, next);
+      // Removing a message from heap
+      if ((item->payload) && (item->free_payload)) free(item->payload);
+      if (item->free_topic) free(item->topic);
+      delete item;
+      // Resetting the MQTT error status if it was
+      ledSysStateClear(SYSLED_MQTT_ERROR, false);
+    } else {
+      // Failed to send message, set the error flag
+      ledSysStateSet(SYSLED_MQTT_ERROR, false);
+      // Reducing the number of sending attempts
+      item->remain_cnt--;
+      if (item->remain_cnt > 0) {
+        rlog_e(tagMQTTQ, "Failed send message \"%s\" [ %d ]", item->topic, strlen(item->payload));
+      } else {
+        rlog_e(tagMQTTQ, "Failed send message \"%s\" [ %d ], message lost", item->topic, strlen(item->payload));
+        // Removing a message from the send queue
+        STAILQ_REMOVE(outbox, item, mqttPub_t, next);
+        // Removing a message from heap
+        if (item->free_payload) free(item->payload);
+        if (item->free_topic) free(item->topic);
+        delete item;
+      };
+      return false;
+    };
+    // esp_task_wdt_reset();
+    // taskYIELD();
+    vTaskDelay(1);
+  };
+  return true;  
+}
+
+void mqttOutboxFree(mqttOutboxHandle_t outbox)
+{
+  mqttPubHandle_t item, tmp;
+  STAILQ_FOREACH_SAFE(item, outbox, next, tmp) {
+    // Removing a message from the send queue
+    STAILQ_REMOVE(outbox, item, mqttPub_t, next);
+    // Removing a message from heap
+    if (item->free_payload) free(item->payload);
+    if (item->free_topic) free(item->topic);
+    delete item;
+  };
+  delete outbox;
+}
+
+
 
 om_ctrl_t * omInitController(const uint32_t om_id, const char * om_key)
 {
@@ -251,14 +358,22 @@ bool omTaskResume()
 
 bool omTaskCreate() 
 {
-  if (_omTask == NULL) {
-    if (_omQueue == NULL) {
+  if (!_omTask) {
+    if (!_omControllers) {
+      if !(omControllersInit()) {
+        rloga_e("Failed to create a list of controllers!");
+        ledSysStateSet(SYSLED_ERROR, false);
+        return false;
+      };
+    };
+
+    if (!_omQueue) {
       #if CONFIG_OPENMON_STATIC_ALLOCATION
       _omQueue = xQueueCreateStatic(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE, &(_omQueueStorage[0]), &_omQueueBuffer);
       #else
       _omQueue = xQueueCreate(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE);
       #endif // CONFIG_OPENMON_STATIC_ALLOCATION
-      if (_omQueue == NULL) {
+      if (!_omQueue) {
         rloga_e("Failed to create a queue for sending data to OpenMonitoring!");
         ledSysStateSet(SYSLED_ERROR, false);
         return false;

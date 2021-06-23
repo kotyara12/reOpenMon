@@ -23,15 +23,6 @@ extern "C" {
 
 #define OPENMON_TOKEN_LENGTH 6
 
-typedef struct {
-  uint32_t id;
-  char key[OPENMON_TOKEN_LENGTH];
-  unsigned long last_send;
-  unsigned long next_send;
-  xSemaphoreHandle lock;
-  char* data;
-} om_ctrl_t;
-
 /**
  * EN: Task management: create, suspend, resume and delete
  * RU: Управление задачей: создание, приостановка, восстановление и удаление
