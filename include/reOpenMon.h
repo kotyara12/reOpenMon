@@ -33,18 +33,13 @@ bool omTaskResume();
 bool omTaskDelete();
 
 /**
- * EN: Controller initialization
- * RU: Создание контроллера.
+ * EN: Adding a new controller to the list
+ * RU: Добавление нового контроллера в список
  * 
- * @param om_id - Controller ID / Идентификатор контроллера
- * @param om_key - Controller token / Токен контроллера
+ * @param omId - Controller ID / Идентификатор контроллера
+ * @param omKey - Controller token / Токен контроллера
  **/
-om_ctrl_t * omInitController(const uint32_t om_id, const char * om_key);
-/**
- * EN: Removing a controller and free resources
- * RU: Удаление контроллера и освобождение ресурсов
- **/
-void omFreeController(om_ctrl_t * omController);
+bool omControllerInit(const uint32_t omId, const char * omKey);
 
 /**
  * EN: Sending data to the specified controller. The fields string will be removed after submission.
@@ -55,10 +50,10 @@ void omFreeController(om_ctrl_t * omController);
  * Если с момента последней отправки данных в контроллер прошло мало времени, то данные будут поставлены в очередь.
  * Если в очереди на данный контроллер уже есть данные, то они будут перезаписаны новыми данными.
  * 
- * @param omController - Pointer to controller from omInitController / Указатель на контроллер из omInitController 
- * @param fields - Data in the format p1=... / Данные в формате p1=...
+ * @param omId - Controller ID / Идентификатор контроллера
+ * @param omFields - Data in the format p1=... / Данные в формате p1=...
  **/
-bool omSend(om_ctrl_t * omController, char * fields);
+bool omSend(const uint32_t omId, char * omFields);
 
 #ifdef __cplusplus
 }
