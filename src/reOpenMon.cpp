@@ -19,9 +19,9 @@
 #define API_OPENMON_SEND_PATH "/get"
 #define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
 
-typedef struct {
+typedef struct omController_t {
   uint32_t id;
-  char key[OPENMON_TOKEN_LENGTH];
+  const char* key;
   time_t last_send;
   char* data;
   SLIST_ENTRY(omController_t) next;
@@ -54,23 +54,19 @@ uint8_t _omQueueStorage [CONFIG_OPENMON_QUEUE_SIZE * OPENMON_QUEUE_ITEM_SIZE];
 
 bool omSendFailed = false;
 
-bool omSendEx(om_ctrl_t * omController)
+// -----------------------------------------------------------------------------------------------------------------------
+// ----------------------------------------------------- Call API --------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+bool omSendEx(omControllerHandle_t omController)
 {
   bool _result = true;
   char* get_request = nullptr;
 
-  // Block data from changing
-  do { vPortYield(); } 
-  while (xSemaphoreTake(omController->lock, portMAX_DELAY) != pdPASS);
   // Create the text of the GET request
   if (omController->data) {
     get_request = malloc_stringf(API_OPENMON_SEND_VALUES, omController->id, omController->key, omController->data);
-    // Raw data is no longer needed
-    free(omController->data);
-    omController->data = nullptr;
   };
-  // Remove the lock
-  xSemaphoreGive(omController->lock);
 
   if (get_request) {
     ledSysOn(true);
@@ -92,10 +88,13 @@ bool omSendEx(om_ctrl_t * omController)
       if (err == ESP_OK) {
         int retCode = esp_http_client_get_status_code(client);
         _result = ((retCode == 200) || (retCode == 301));
-        if (_result)
+        if (_result) {
           rlog_i(tagOM, "Data sent: %s", get_request);
-        else 
+        } else {
           rlog_e(tagOM, "Failed to send message, API error code: #%d!", retCode);
+        };
+        // Fix time of the last access to the server
+        omController->last_send = millis();
       }
       else {
         _result = false;
@@ -108,8 +107,6 @@ bool omSendEx(om_ctrl_t * omController)
       rlog_e(tagOM, "Failed to complete request to open-monitoring.online!");
     };
     ledSysOff(true);
-    // We fix the time of the last access to the server
-    omController->last_send = millis();
   };
   // Remove the request from memory
   if (get_request) free(get_request);
@@ -129,17 +126,40 @@ bool omControllersInit()
   return (_omControllers);
 }
 
-omControllerHandle_t omControllerFind(uint32_t id)
+bool omControllerInit(const uint32_t omId, const char * omKey)
 {
-  mqttPubHandle_t item;
-  SLIST_FOREACH(item, outbox, next) {
-    if (strcasecmp(item->topic, msg->topic) == 0) {
+  if (!_omControllers) {
+    rlog_e(tagOM, "The controller list has not been initialized!");
+    return false;
+  };
+    
+  omControllerHandle_t ctrl = new omController_t;
+  if (!ctrl) {
+    rlog_e(tagOM, "Memory allocation error for data structure!");
+    return false;
+  };
+
+  ctrl->id = omId;
+  ctrl->key = omKey;
+  ctrl->last_send = 0;
+  ctrl->data = nullptr;
+  SLIST_NEXT(ctrl, next) = nullptr;
+  SLIST_INSERT_HEAD(_omControllers, ctrl, next);
+  return true;
+}
+
+omControllerHandle_t omControllerFind(const uint32_t omId)
+{
+  omControllerHandle_t item;
+  SLIST_FOREACH(item, _omControllers, next) {
+    if (item->id == omId) {
       return item;
     }
   }
-  return NULL;
+  return nullptr;
 } 
 
+/*
 bool mqttOutboxPublish(mqttOutboxHandle_t outbox)
 {
   mqttPubHandle_t item;
@@ -187,92 +207,45 @@ bool mqttOutboxPublish(mqttOutboxHandle_t outbox)
   };
   return true;  
 }
+*/
 
-void mqttOutboxFree(mqttOutboxHandle_t outbox)
+void omControllersFree()
 {
-  mqttPubHandle_t item, tmp;
-  STAILQ_FOREACH_SAFE(item, outbox, next, tmp) {
-    // Removing a message from the send queue
-    STAILQ_REMOVE(outbox, item, mqttPub_t, next);
-    // Removing a message from heap
-    if (item->free_payload) free(item->payload);
-    if (item->free_topic) free(item->topic);
+  omControllerHandle_t item, tmp;
+  SLIST_FOREACH_SAFE(item, _omControllers, next, tmp) {
+    SLIST_REMOVE(_omControllers, item, omController_t, next);
+    if (item->data) free(item->data);
     delete item;
   };
-  delete outbox;
+  delete _omControllers;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------ Adding data to the send queue ----------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
 
-
-om_ctrl_t * omInitController(const uint32_t om_id, const char * om_key)
+bool omSend(const uint32_t omId, char * omFields)
 {
-  om_ctrl_t * ret = new om_ctrl_t;
-  if (ret == NULL) {
-    rlog_e(tagOM, "Memory allocation error for data structure!");
-    return NULL;
-  };
-
-  ret->id = om_id;
-  strcpy(ret->key, om_key);
-  ret->last_send = 0;
-  ret->next_send = 0;
-  ret->data = nullptr;
-  
-  ret->lock = xSemaphoreCreateMutex();
-  if (ret->lock == NULL) {
-    rlog_e(tagOM, "Error creating data lock mutex!");
-    delete ret;
-    return NULL;
-  };
-
-  return ret;
-}
-
-void omFreeController(om_ctrl_t * omController)
-{
-  if (omController) {
-    if (omController->lock) vSemaphoreDelete(omController->lock);
-    if (omController->data) free(omController->data);
-    delete omController;
-  };
-}
-
-bool omSend(om_ctrl_t * omController, char * fields)
-{
-  if ((_omQueue) && (omController) && (omController->lock) && (fields)) {
-    // Blocking data from changing
-    if (xSemaphoreTake(omController->lock, CONFIG_OPENMON_QUEUE_WAIT / portTICK_RATE_MS) == pdPASS) {
-      // If there was any data in the send queue, delete it
-      if (omController->data) free(omController->data);
-      omController->data = fields;
-      // We set the time of sending data of this controller
-      if (checkTimeout(omController->last_send, CONFIG_OPENMON_MIN_INTERVAL)) {
-        omController->next_send = 0;
-      }
-      else {
-        omController->next_send = omController->last_send + CONFIG_OPENMON_MIN_INTERVAL;
-      };
-      // Unlocking data
-      xSemaphoreGive(omController->lock);
-
-      // We add a message to the queue so as not to delay the calling thread in case of problems with sending
-      if (xQueueSend(_omQueue, &omController, CONFIG_OPENMON_QUEUE_WAIT / portTICK_RATE_MS) == pdPASS) {
+  if (_omQueue) {
+    omQueueItem_t * item = new omQueueItem_t;
+    if (item) {
+      item->id = omId;
+      item->data = omFields;
+      if (xQueueSend(_omQueue, &item, CONFIG_OPENMON_QUEUE_WAIT / portTICK_RATE_MS) == pdPASS) {
         return true;
-      }
-      else {
-        rloga_e("Error adding message to queue [ %s ]!", omTaskName);
-        ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
       };
-    }
-    else {
-      rloga_e("Failed to access the send queue [ %s ]!", omTaskName);
-      ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
     };
+    rloga_e("Error adding message to queue [ %s ]!", omTaskName);
+    ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
   };
-
   return false;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------- Queue processing --------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+/*
 void omProcessQueue(TickType_t xTicksToWait)
 {
   om_ctrl_t * omController;
@@ -312,23 +285,35 @@ void omProcessQueue(TickType_t xTicksToWait)
     } while (!resAttempt && (tryAttempt <= CONFIG_OPENMON_MAX_ATTEMPTS));
   };
 }
+*/
 
 void omTaskExec(void *pvParameters)
 {
+  omQueueItem_t * item = nullptr;
+  omControllerHandle_t ctrl = nullptr;
+  TickType_t wait_queue = portMAX_DELAY;
   while (true) {
-    // We are waiting for an Internet connection, if for some reason it is not (and you can also pause the task if the connection is interrupted, but this is not necessary)
-    if (!wifiIsConnected()) {
-      ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-      wifiWaitConnection(portMAX_DELAY);
-      ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
+    // Receiving new data
+    if (xQueueReceive(_omQueue, &item, wait_queue) == pdPASS) {
+      ctrl = omControllerFind(item->id);
+      if (ctrl) {
+        // Replace with new data
+        if (ctrl->data) free(ctrl->data);
+        ctrl->data = item->data;
+      } else {
+        rlog_e(tagOM, "Controller %d not found!", item->id);
+      };
+      delete item;
+      item = nullptr;
     };
-
-    // Processing the dispatch queue
-    omProcessQueue(portMAX_DELAY);
+    vTaskDelay(1);
   };
-
   omTaskDelete();
 }
+
+// -----------------------------------------------------------------------------------------------------------------------
+// -------------------------------------------------- Task routines ------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
 
 bool omTaskSuspend()
 {
@@ -360,7 +345,7 @@ bool omTaskCreate()
 {
   if (!_omTask) {
     if (!_omControllers) {
-      if !(omControllersInit()) {
+      if (!omControllersInit()) {
         rloga_e("Failed to create a list of controllers!");
         ledSysStateSet(SYSLED_ERROR, false);
         return false;
@@ -374,6 +359,7 @@ bool omTaskCreate()
       _omQueue = xQueueCreate(CONFIG_OPENMON_QUEUE_SIZE, OPENMON_QUEUE_ITEM_SIZE);
       #endif // CONFIG_OPENMON_STATIC_ALLOCATION
       if (!_omQueue) {
+        omControllersFree();
         rloga_e("Failed to create a queue for sending data to OpenMonitoring!");
         ledSysStateSet(SYSLED_ERROR, false);
         return false;
@@ -387,6 +373,7 @@ bool omTaskCreate()
     #endif // CONFIG_OPENMON_STATIC_ALLOCATION
     if (_omTask == NULL) {
       vQueueDelete(_omQueue);
+      omControllersFree();
       rloga_e("Failed to create task for sending data to OpenMonitoring!");
       ledSysStateSet(SYSLED_ERROR, false);
       return false;
@@ -404,6 +391,8 @@ bool omTaskCreate()
 
 bool omTaskDelete()
 {
+  omControllersFree();
+
   if (_omQueue != NULL) {
     vQueueDelete(_omQueue);
     _omQueue = NULL;
