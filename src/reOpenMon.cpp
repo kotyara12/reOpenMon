@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include "rLog.h"
+#include "rTypes.h"
 #include "rStrings.h"
 #include "esp_http_client.h"
 #include "reEsp32.h"
@@ -13,16 +14,27 @@
 #include "rePing.h"
 #include "reWiFi.h"
 #include "sys/queue.h"
+#if CONFIG_TELEGRAM_ENABLE
+#include "reTgSend.h"
+#endif // CONFIG_TELEGRAM_ENABLE
 
 #define API_OPENMON_HOST "open-monitoring.online"
 #define API_OPENMON_PORT 80
 #define API_OPENMON_SEND_PATH "/get"
 #define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
+#define API_OPENMON_CHECK_INTERVAL 1000
+
+typedef enum {
+  OM_OK         = 0,
+  OM_ERROR_API  = 1,
+  OM_ERROR_HTTP = 2
+} omSendStatus_t;
 
 typedef struct omController_t {
   uint32_t id;
   const char* key;
-  time_t last_send;
+  uint64_t last_send;
+  uint8_t attempt;
   char* data;
   SLIST_ENTRY(omController_t) next;
 } omController_t;
@@ -51,67 +63,6 @@ StaticTask_t _omTaskBuffer;
 StackType_t _omTaskStack[CONFIG_OPENMON_STACK_SIZE];
 uint8_t _omQueueStorage [CONFIG_OPENMON_QUEUE_SIZE * OPENMON_QUEUE_ITEM_SIZE];
 #endif // CONFIG_OPENMON_STATIC_ALLOCATION
-
-bool omSendFailed = false;
-
-// -----------------------------------------------------------------------------------------------------------------------
-// ----------------------------------------------------- Call API --------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------
-
-bool omSendEx(omControllerHandle_t omController)
-{
-  bool _result = true;
-  char* get_request = nullptr;
-
-  // Create the text of the GET request
-  if (omController->data) {
-    get_request = malloc_stringf(API_OPENMON_SEND_VALUES, omController->id, omController->key, omController->data);
-  };
-
-  if (get_request) {
-    ledSysOn(true);
-    // Configuring request parameters
-    esp_http_client_config_t cfgHttp;
-    memset(&cfgHttp, 0, sizeof(cfgHttp));
-    cfgHttp.method = HTTP_METHOD_GET;
-    cfgHttp.host = API_OPENMON_HOST;
-    cfgHttp.port = API_OPENMON_PORT;
-    cfgHttp.path = API_OPENMON_SEND_PATH;
-    cfgHttp.query = get_request;
-    cfgHttp.use_global_ca_store = false;
-    cfgHttp.transport_type = HTTP_TRANSPORT_OVER_TCP;
-    cfgHttp.is_async = false;
-    // Make a request to the API
-    esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
-    if (client != NULL) {
-      esp_err_t err = esp_http_client_perform(client);
-      if (err == ESP_OK) {
-        int retCode = esp_http_client_get_status_code(client);
-        _result = ((retCode == 200) || (retCode == 301));
-        if (_result) {
-          rlog_i(tagOM, "Data sent: %s", get_request);
-        } else {
-          rlog_e(tagOM, "Failed to send message, API error code: #%d!", retCode);
-        };
-        // Fix time of the last access to the server
-        omController->last_send = millis();
-      }
-      else {
-        _result = false;
-        rlog_e(tagOM, "Failed to complete request to open-monitoring.online, error code: 0x%x!", err);
-      };
-      esp_http_client_cleanup(client);
-    }
-    else {
-      _result = false;
-      rlog_e(tagOM, "Failed to complete request to open-monitoring.online!");
-    };
-    ledSysOff(true);
-  };
-  // Remove the request from memory
-  if (get_request) free(get_request);
-  return _result;
-}
 
 // -----------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------- Controller list -----------------------------------------------------
@@ -142,6 +93,7 @@ bool omControllerInit(const uint32_t omId, const char * omKey)
   ctrl->id = omId;
   ctrl->key = omKey;
   ctrl->last_send = 0;
+  ctrl->attempt = 0;
   ctrl->data = nullptr;
   SLIST_NEXT(ctrl, next) = nullptr;
   SLIST_INSERT_HEAD(_omControllers, ctrl, next);
@@ -158,56 +110,6 @@ omControllerHandle_t omControllerFind(const uint32_t omId)
   }
   return nullptr;
 } 
-
-/*
-bool mqttOutboxPublish(mqttOutboxHandle_t outbox)
-{
-  mqttPubHandle_t item;
-  item = STAILQ_FIRST(outbox);
-  if (item) {
-    rlog_v(tagMQTTQ, "Processing outbox message \"%s\" [ %d ]", item->topic, strlen(item->payload));
-    ledSysOn(true);
-    bool send = false;
-    if (item->payload) {
-      send = esp_mqtt_publish(item->topic, item->payload, item->qos, item->retained);
-    } else {
-      send = esp_mqtt_publish(item->topic, "", item->qos, item->retained);
-    };
-    ledSysOff(true);
-    if (send) {
-      // Removing a message from the send queue
-      STAILQ_REMOVE(outbox, item, mqttPub_t, next);
-      // Removing a message from heap
-      if ((item->payload) && (item->free_payload)) free(item->payload);
-      if (item->free_topic) free(item->topic);
-      delete item;
-      // Resetting the MQTT error status if it was
-      ledSysStateClear(SYSLED_MQTT_ERROR, false);
-    } else {
-      // Failed to send message, set the error flag
-      ledSysStateSet(SYSLED_MQTT_ERROR, false);
-      // Reducing the number of sending attempts
-      item->remain_cnt--;
-      if (item->remain_cnt > 0) {
-        rlog_e(tagMQTTQ, "Failed send message \"%s\" [ %d ]", item->topic, strlen(item->payload));
-      } else {
-        rlog_e(tagMQTTQ, "Failed send message \"%s\" [ %d ], message lost", item->topic, strlen(item->payload));
-        // Removing a message from the send queue
-        STAILQ_REMOVE(outbox, item, mqttPub_t, next);
-        // Removing a message from heap
-        if (item->free_payload) free(item->payload);
-        if (item->free_topic) free(item->topic);
-        delete item;
-      };
-      return false;
-    };
-    // esp_task_wdt_reset();
-    // taskYIELD();
-    vTaskDelay(1);
-  };
-  return true;  
-}
-*/
 
 void omControllersFree()
 {
@@ -242,71 +144,184 @@ bool omSend(const uint32_t omId, char * omFields)
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
-// --------------------------------------------------- Queue processing --------------------------------------------------
+// ----------------------------------------------------- Call API --------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------
 
-/*
-void omProcessQueue(TickType_t xTicksToWait)
+omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
 {
-  om_ctrl_t * omController;
- 
-  if (xQueueReceive(_omQueue, &omController, xTicksToWait) == pdPASS) {
-    // If it is a delayed dispatch, we wait for the start time
-    while (omController->next_send > millis()) {
-      // While we are waiting, we recursively process other controllers, if they are in the queue.
-      omProcessQueue(1);
-    };
+  omSendStatus_t _result = OM_OK;
+  char* get_request = nullptr;
 
-    // Trying to send a message to the OpenMonitoring API
-    uint16_t tryAttempt = 1;
-    bool resAttempt = false;
-    do {
-      // Checking Internet and host availability
-      checkHost(API_OPENMON_HOST, tryAttempt > 1, tagOM, SYSLED_OTHER_PUB_ERROR, CONFIG_MESSAGE_TG_HOST_AVAILABLE, CONFIG_MESSAGE_TG_HOST_UNAVAILABLE, 
-        CONFIG_HOST_PING_SESSION_COUNT, CONFIG_HOST_PING_SESSION_INTERVAL, CONFIG_HOST_PING_SESSION_TIMEOUT, CONFIG_HOST_PING_SESSION_DATASIZE);
+  // Create the text of the GET request
+  if (ctrl->data) {
+    get_request = malloc_stringf(API_OPENMON_SEND_VALUES, ctrl->id, ctrl->key, ctrl->data);
+  };
 
-      // Trying to send a message to the OpenMonitoring API
-      resAttempt = omSendEx(omController);
-      if (resAttempt) {
-        if (omSendFailed) {
-          omSendFailed = false;
-          ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
+  if (get_request) {
+    ledSysOn(true);
+    // Configuring request parameters
+    esp_http_client_config_t cfgHttp;
+    memset(&cfgHttp, 0, sizeof(cfgHttp));
+    cfgHttp.method = HTTP_METHOD_GET;
+    cfgHttp.host = API_OPENMON_HOST;
+    cfgHttp.port = API_OPENMON_PORT;
+    cfgHttp.path = API_OPENMON_SEND_PATH;
+    cfgHttp.query = get_request;
+    cfgHttp.use_global_ca_store = false;
+    cfgHttp.transport_type = HTTP_TRANSPORT_OVER_TCP;
+    cfgHttp.is_async = false;
+    // Make a request to the API
+    esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
+    if (client != NULL) {
+      esp_err_t err = esp_http_client_perform(client);
+      if (err == ESP_OK) {
+        int retCode = esp_http_client_get_status_code(client);
+        if ((retCode == 200) || (retCode == 301)) {
+          _result = OM_OK;
+          rlog_i(tagOM, "Data sent # %d: %s", ctrl->id, get_request);
+        } else {
+          _result = OM_ERROR_API;
+          rlog_e(tagOM, "Failed to send message, API error code: #%d!", retCode);
         };
       }
       else {
-        if (!omSendFailed) {
-          omSendFailed = true;
-          ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-          tryAttempt++;
-          vTaskDelay(CONFIG_OPENMON_MIN_INTERVAL / portTICK_RATE_MS);
-        };
+        _result = OM_ERROR_HTTP;
+        rlog_e(tagOM, "Failed to complete request to open-monitoring.online, error code: 0x%x!", err);
       };
-      // esp_task_wdt_reset();
-    } while (!resAttempt && (tryAttempt <= CONFIG_OPENMON_MAX_ATTEMPTS));
+      esp_http_client_cleanup(client);
+    }
+    else {
+      _result = OM_ERROR_HTTP;
+      rlog_e(tagOM, "Failed to complete request to open-monitoring.online!");
+    };
+    ledSysOff(true);
   };
+  // Remove the request from memory
+  if (get_request) free(get_request);
+  return _result;
 }
-*/
+
+// -----------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------- Queue processing --------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
 
 void omTaskExec(void *pvParameters)
 {
   omQueueItem_t * item = nullptr;
   omControllerHandle_t ctrl = nullptr;
   TickType_t wait_queue = portMAX_DELAY;
+  omSendStatus_t last_status = OM_ERROR_HTTP;
+  bool api_enabled = true;
+  bool status_changed_api = false;
+  
   while (true) {
     // Receiving new data
     if (xQueueReceive(_omQueue, &item, wait_queue) == pdPASS) {
       ctrl = omControllerFind(item->id);
       if (ctrl) {
-        // Replace with new data
+        // Replacing controller data with new ones from the transporter
+        ctrl->attempt = 0;
         if (ctrl->data) free(ctrl->data);
         ctrl->data = item->data;
+        item->data = nullptr; // !!! not free() !!!
       } else {
-        rlog_e(tagOM, "Controller %d not found!", item->id);
+        rlog_e(tagOM, "Controller # %d not found!", item->id);
       };
+      // Free transporter
+      if (item->data) free(item->data);
       delete item;
       item = nullptr;
     };
-    vTaskDelay(1);
+
+    // Check internet availability 
+    if (wifiIsConnected() && wifiWaitConnection(0)) {
+      // Check API availability only if there were failures before
+      if (!api_enabled || (last_status == OM_ERROR_HTTP)) {
+        api_enabled = pingHost(API_OPENMON_HOST, 
+          CONFIG_HOST_PING_SESSION_COUNT, 
+          CONFIG_HOST_PING_SESSION_INTERVAL, 
+          CONFIG_HOST_PING_SESSION_TIMEOUT, 
+          CONFIG_HOST_PING_SESSION_DATASIZE).loss < 100;
+        if (api_enabled) {
+          // API is available
+          if (status_changed_api) {
+            status_changed_api = false;
+            ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
+            rlog_d(tagOM, "Access to %s restored", API_OPENMON_HOST);
+            #if CONFIG_TELEGRAM_ENABLE
+            tgSend(true, CONFIG_TELEGRAM_DEVICE,CONFIG_MESSAGE_TG_HOST_AVAILABLE, API_OPENMON_HOST);
+            #endif // CONFIG_TELEGRAM_ENABLE
+          };
+        } else {
+          // API not available
+          wait_queue = CONFIG_INTERNET_PING_INTERVAL_UNAVAILABLE / portTICK_RATE_MS;
+          if (!status_changed_api) {
+            status_changed_api = true;
+            ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
+            rlog_w(tagOM, "No access to %s, waiting...", API_OPENMON_HOST);
+            #if CONFIG_TELEGRAM_ENABLE
+            tgSend(true, CONFIG_TELEGRAM_DEVICE,CONFIG_MESSAGE_TG_HOST_UNAVAILABLE, API_OPENMON_HOST);
+            #endif // CONFIG_TELEGRAM_ENABLE
+          };
+        };
+      };
+    } else {
+      // Internet not available
+      wait_queue = API_OPENMON_CHECK_INTERVAL / portTICK_RATE_MS;
+      if (api_enabled) {
+        api_enabled = false;
+        status_changed_api = false;
+        ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
+        rlog_w(tagOM, "No internet access, waiting...");
+      };
+    };
+
+    // Queue processing
+    if (api_enabled) {
+      ctrl = nullptr;
+      wait_queue = portMAX_DELAY;
+      SLIST_FOREACH(ctrl, _omControllers, next) {
+        if (ctrl->data) {
+          // Sending data or finding the minimum delay
+          if ((ctrl->last_send + CONFIG_OPENMON_MIN_INTERVAL) < millis()) {
+            // Attempt to send data
+            ctrl->attempt++;
+            last_status = omSendEx(ctrl);
+            switch (last_status) {
+              // Data sent successfully
+              case OM_OK:
+                ctrl->last_send = millis();
+                ctrl->attempt = 0;
+                free(ctrl->data);
+                ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
+                break;
+
+              // API rejected request
+              case OM_ERROR_API:
+                if (ctrl->attempt >= CONFIG_OPENMON_MAX_ATTEMPTS) {
+                  ctrl->last_send = millis();
+                  ctrl->attempt = 0;
+                  free(ctrl->data);
+                  rlog_e(tagOM, "Failed to send data to controller #%d!", ctrl->id);
+                };
+                ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
+                break;
+
+              // Failed to send data due to transport error
+              default:
+                ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
+                break;
+            };
+          } else {
+            // Find the minimum delay before the next sending to the controller
+            TickType_t send_delay = ((ctrl->last_send + CONFIG_OPENMON_MIN_INTERVAL) - millis()) / portTICK_RATE_MS;
+            if (send_delay < wait_queue) {
+              wait_queue = send_delay;
+            };
+          };
+        };
+      };
+    };
   };
   omTaskDelete();
 }
