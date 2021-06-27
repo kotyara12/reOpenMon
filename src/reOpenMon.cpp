@@ -80,6 +80,10 @@ bool omControllersInit()
 bool omControllerInit(const uint32_t omId, const char * omKey)
 {
   if (!_omControllers) {
+    omControllersInit();
+  };
+
+  if (!_omControllers) {
     rlog_e(tagOM, "The controller list has not been initialized!");
     return false;
   };
@@ -212,7 +216,6 @@ void omTaskExec(void *pvParameters)
   TickType_t wait_queue = portMAX_DELAY;
   omSendStatus_t last_status = OM_ERROR_HTTP;
   bool api_enabled = true;
-  bool status_changed_api = false;
   
   while (true) {
     // Receiving new data
@@ -220,10 +223,12 @@ void omTaskExec(void *pvParameters)
       ctrl = omControllerFind(item->id);
       if (ctrl) {
         // Replacing controller data with new ones from the transporter
-        ctrl->attempt = 0;
-        if (ctrl->data) free(ctrl->data);
-        ctrl->data = item->data;
-        item->data = nullptr; // !!! not free() !!!
+        if (item->data) {
+          ctrl->attempt = 0;
+          if (ctrl->data) free(ctrl->data);
+          ctrl->data = item->data;
+          item->data = nullptr;
+        };
       } else {
         rlog_e(tagOM, "Controller # %d not found!", item->id);
       };
@@ -235,49 +240,11 @@ void omTaskExec(void *pvParameters)
 
     // Check internet availability 
     if (wifiIsConnected() && wifiWaitConnection(0)) {
-      // Check API availability only if there were failures before
-      if (!api_enabled || (last_status == OM_ERROR_HTTP)) {
-        api_enabled = pingHost(API_OPENMON_HOST, 
-          CONFIG_HOST_PING_SESSION_COUNT, 
-          CONFIG_HOST_PING_SESSION_INTERVAL, 
-          CONFIG_HOST_PING_SESSION_TIMEOUT, 
-          CONFIG_HOST_PING_SESSION_DATASIZE).loss < 100;
-        if (api_enabled) {
-          // API is available
-          if (status_changed_api) {
-            status_changed_api = false;
-            ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
-            rlog_d(tagOM, "Access to %s restored", API_OPENMON_HOST);
-            #if CONFIG_TELEGRAM_ENABLE
-            tgSend(true, CONFIG_TELEGRAM_DEVICE,CONFIG_MESSAGE_TG_HOST_AVAILABLE, API_OPENMON_HOST);
-            #endif // CONFIG_TELEGRAM_ENABLE
-          };
-        } else {
-          // API not available
-          wait_queue = CONFIG_INTERNET_PING_INTERVAL_UNAVAILABLE / portTICK_RATE_MS;
-          if (!status_changed_api) {
-            status_changed_api = true;
-            ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-            rlog_w(tagOM, "No access to %s, waiting...", API_OPENMON_HOST);
-            #if CONFIG_TELEGRAM_ENABLE
-            tgSend(true, CONFIG_TELEGRAM_DEVICE,CONFIG_MESSAGE_TG_HOST_UNAVAILABLE, API_OPENMON_HOST);
-            #endif // CONFIG_TELEGRAM_ENABLE
-          };
-        };
+      if (!api_enabled) {
+        api_enabled = true;
+        ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
+        rlog_i(tagOM, "Internet access restored");
       };
-    } else {
-      // Internet not available
-      wait_queue = API_OPENMON_CHECK_INTERVAL / portTICK_RATE_MS;
-      if (api_enabled) {
-        api_enabled = false;
-        status_changed_api = false;
-        ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-        rlog_w(tagOM, "No internet access, waiting...");
-      };
-    };
-
-    // Queue processing
-    if (api_enabled) {
       ctrl = nullptr;
       wait_queue = portMAX_DELAY;
       SLIST_FOREACH(ctrl, _omControllers, next) {
@@ -292,7 +259,10 @@ void omTaskExec(void *pvParameters)
               case OM_OK:
                 ctrl->last_send = millis();
                 ctrl->attempt = 0;
-                free(ctrl->data);
+                if (ctrl->data) {
+                  free(ctrl->data);
+                  ctrl->data = nullptr;
+                };
                 ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
                 break;
 
@@ -301,7 +271,10 @@ void omTaskExec(void *pvParameters)
                 if (ctrl->attempt >= CONFIG_OPENMON_MAX_ATTEMPTS) {
                   ctrl->last_send = millis();
                   ctrl->attempt = 0;
-                  free(ctrl->data);
+                  if (ctrl->data) {
+                    free(ctrl->data);
+                    ctrl->data = nullptr;
+                  };
                   rlog_e(tagOM, "Failed to send data to controller #%d!", ctrl->id);
                 };
                 ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
@@ -320,6 +293,14 @@ void omTaskExec(void *pvParameters)
             };
           };
         };
+      };
+    } else {
+      // Internet not available
+      wait_queue = API_OPENMON_CHECK_INTERVAL / portTICK_RATE_MS;
+      if (api_enabled) {
+        api_enabled = false;
+        ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
+        rlog_w(tagOM, "No internet access, waiting...");
       };
     };
   };
