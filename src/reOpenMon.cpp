@@ -1,5 +1,8 @@
-#include "reOpenMon.h"
 #include "project_config.h"
+
+#if CONFIG_OPENMON_ENABLE
+
+#include "reOpenMon.h"
 #include <cstring>
 #include <stdio.h>
 #include <stdarg.h>
@@ -8,15 +11,9 @@
 #include "rTypes.h"
 #include "rStrings.h"
 #include "esp_http_client.h"
-#include "reEsp32.h"
-#include "reLed.h"
-#include "reLedSys.h"
-#include "rePing.h"
 #include "reWiFi.h"
+#include "reEvents.h"
 #include "sys/queue.h"
-#if CONFIG_TELEGRAM_ENABLE
-#include "reTgSend.h"
-#endif // CONFIG_TELEGRAM_ENABLE
 
 #define API_OPENMON_HOST "open-monitoring.online"
 #define API_OPENMON_PORT 80
@@ -33,7 +30,8 @@ typedef enum {
 typedef struct omController_t {
   uint32_t id;
   const char* key;
-  uint64_t last_send;
+  uint32_t interval;
+  TickType_t next_send;
   uint8_t attempt;
   char* data;
   SLIST_ENTRY(omController_t) next;
@@ -54,8 +52,8 @@ TaskHandle_t _omTask;
 QueueHandle_t _omQueue = nullptr;
 omHeadHandle_t _omControllers = nullptr;
 
-static const char* tagOM = "OpenMon";
-static const char* omTaskName = "openMon";
+static const char* logTAG = "OpenMon";
+static const char* omTaskName = "open_mon";
 
 #if CONFIG_OPENMON_STATIC_ALLOCATION
 StaticQueue_t _omQueueBuffer;
@@ -77,26 +75,31 @@ bool omControllersInit()
   return (_omControllers);
 }
 
-bool omControllerInit(const uint32_t omId, const char * omKey)
+bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t omInterval)
 {
   if (!_omControllers) {
     omControllersInit();
   };
 
   if (!_omControllers) {
-    rlog_e(tagOM, "The controller list has not been initialized!");
+    rlog_e(logTAG, "The controller list has not been initialized!");
     return false;
   };
     
   omControllerHandle_t ctrl = new omController_t;
   if (!ctrl) {
-    rlog_e(tagOM, "Memory allocation error for data structure!");
+    rlog_e(logTAG, "Memory allocation error for data structure!");
     return false;
   };
 
   ctrl->id = omId;
   ctrl->key = omKey;
-  ctrl->last_send = 0;
+  if (omInterval < CONFIG_OPENMON_MIN_INTERVAL) {
+    ctrl->interval = pdMS_TO_TICKS(CONFIG_OPENMON_MIN_INTERVAL);
+  } else {
+    ctrl->interval = pdMS_TO_TICKS(omInterval);
+  };
+  ctrl->next_send = 0;
   ctrl->attempt = 0;
   ctrl->data = nullptr;
   SLIST_NEXT(ctrl, next) = nullptr;
@@ -133,7 +136,8 @@ void omControllersFree()
 bool omSend(const uint32_t omId, char * omFields)
 {
   if (_omQueue) {
-    omQueueItem_t * item = new omQueueItem_t;
+    omQueueItem_t* item = (omQueueItem_t*)calloc(1, sizeof(omQueueItem_t));
+    // omQueueItem_t * item = new omQueueItem_t;
     if (item) {
       item->id = omId;
       item->data = omFields;
@@ -142,7 +146,7 @@ bool omSend(const uint32_t omId, char * omFields)
       };
     };
     rloga_e("Error adding message to queue [ %s ]!", omTaskName);
-    ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
+    eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_SET, false);
   };
   return false;
 }
@@ -162,7 +166,9 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
   };
 
   if (get_request) {
-    ledSysOn(true);
+    // Flashing system LED
+    eventLoopPostSystem(RE_SYS_SYSLED, RE_SYS_FLASH);
+
     // Configuring request parameters
     esp_http_client_config_t cfgHttp;
     memset(&cfgHttp, 0, sizeof(cfgHttp));
@@ -174,6 +180,7 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
     cfgHttp.use_global_ca_store = false;
     cfgHttp.transport_type = HTTP_TRANSPORT_OVER_TCP;
     cfgHttp.is_async = false;
+
     // Make a request to the API
     esp_http_client_handle_t client = esp_http_client_init(&cfgHttp);
     if (client != NULL) {
@@ -182,23 +189,22 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
         int retCode = esp_http_client_get_status_code(client);
         if ((retCode == 200) || (retCode == 301)) {
           _result = OM_OK;
-          rlog_i(tagOM, "Data sent # %d: %s", ctrl->id, get_request);
+          rlog_i(logTAG, "Data sent # %d: %s", ctrl->id, get_request);
         } else {
           _result = OM_ERROR_API;
-          rlog_e(tagOM, "Failed to send message, API error code: #%d!", retCode);
+          rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
         };
       }
       else {
         _result = OM_ERROR_HTTP;
-        rlog_e(tagOM, "Failed to complete request to open-monitoring.online, error code: 0x%x!", err);
+        rlog_e(logTAG, "Failed to complete request to open-monitoring.online, error code: 0x%x!", err);
       };
       esp_http_client_cleanup(client);
     }
     else {
       _result = OM_ERROR_HTTP;
-      rlog_e(tagOM, "Failed to complete request to open-monitoring.online!");
+      rlog_e(logTAG, "Failed to complete request to open-monitoring.online!");
     };
-    ledSysOff(true);
   };
   // Remove the request from memory
   if (get_request) free(get_request);
@@ -214,8 +220,8 @@ void omTaskExec(void *pvParameters)
   omQueueItem_t * item = nullptr;
   omControllerHandle_t ctrl = nullptr;
   TickType_t wait_queue = portMAX_DELAY;
-  omSendStatus_t last_status = OM_ERROR_HTTP;
-  bool api_enabled = true;
+  static omSendStatus_t send_status = OM_ERROR_HTTP;
+  static omSendStatus_t last_status = OM_ERROR_HTTP;
   
   while (true) {
     // Receiving new data
@@ -230,64 +236,59 @@ void omTaskExec(void *pvParameters)
           item->data = nullptr;
         };
       } else {
-        rlog_e(tagOM, "Controller # %d not found!", item->id);
+        rlog_e(logTAG, "Controller # %d not found!", item->id);
       };
       // Free transporter
       if (item->data) free(item->data);
-      delete item;
+      free(item);
       item = nullptr;
     };
 
     // Check internet availability 
-    if (wifiIsConnected() && wifiWaitConnection(0)) {
-      if (!api_enabled) {
-        api_enabled = true;
-        ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
-        rlog_i(tagOM, "Internet access restored");
-      };
+    if (wifiIsConnected()) {
       ctrl = nullptr;
       wait_queue = portMAX_DELAY;
       SLIST_FOREACH(ctrl, _omControllers, next) {
+        // Sending data
         if (ctrl->data) {
-          // Sending data or finding the minimum delay
-          if ((ctrl->last_send + CONFIG_OPENMON_MIN_INTERVAL) < millis()) {
+          if (ctrl->next_send < xTaskGetTickCount()) {
             // Attempt to send data
             ctrl->attempt++;
-            last_status = omSendEx(ctrl);
-            switch (last_status) {
-              // Data sent successfully
-              case OM_OK:
-                ctrl->last_send = millis();
+            send_status = omSendEx(ctrl);
+            if (send_status == OM_OK) {
+              ctrl->next_send = xTaskGetTickCount() + ctrl->interval;
+              ctrl->attempt = 0;
+              if (ctrl->data) {
+                free(ctrl->data);
+                ctrl->data = nullptr;
+              };
+              if (last_status != send_status) {
+                last_status = send_status;
+                eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_CLEAR, false);
+              };
+            } else {
+              ctrl->next_send = xTaskGetTickCount() + pdMS_TO_TICKS(CONFIG_OPENMON_ERROR_INTERVAL);
+              if (ctrl->attempt >= CONFIG_OPENMON_MAX_ATTEMPTS) {
                 ctrl->attempt = 0;
                 if (ctrl->data) {
                   free(ctrl->data);
                   ctrl->data = nullptr;
                 };
-                ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
-                break;
-
-              // API rejected request
-              case OM_ERROR_API:
-                if (ctrl->attempt >= CONFIG_OPENMON_MAX_ATTEMPTS) {
-                  ctrl->last_send = millis();
-                  ctrl->attempt = 0;
-                  if (ctrl->data) {
-                    free(ctrl->data);
-                    ctrl->data = nullptr;
-                  };
-                  rlog_e(tagOM, "Failed to send data to controller #%d!", ctrl->id);
-                };
-                ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-                break;
-
-              // Failed to send data due to transport error
-              default:
-                ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-                break;
+                rlog_e(logTAG, "Failed to send data to controller #%d!", ctrl->id);
+              };
+              if (last_status != send_status) {
+                last_status = send_status;
+                eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_SET, false);
+              };
             };
-          } else {
-            // Find the minimum delay before the next sending to the controller
-            TickType_t send_delay = ((ctrl->last_send + CONFIG_OPENMON_MIN_INTERVAL) - millis()) / portTICK_RATE_MS;
+          };
+
+          // Find the minimum delay before the next sending to the controller
+          if (ctrl->data) {
+            TickType_t send_delay = 0;
+            if (ctrl->next_send > xTaskGetTickCount()) {
+              send_delay = ctrl->next_send - xTaskGetTickCount();
+            };
             if (send_delay < wait_queue) {
               wait_queue = send_delay;
             };
@@ -295,13 +296,8 @@ void omTaskExec(void *pvParameters)
         };
       };
     } else {
-      // Internet not available
-      wait_queue = API_OPENMON_CHECK_INTERVAL / portTICK_RATE_MS;
-      if (api_enabled) {
-        api_enabled = false;
-        ledSysStateSet(SYSLED_OTHER_PUB_ERROR, false);
-        rlog_w(tagOM, "No internet access, waiting...");
-      };
+      // If the Internet is not available, repeat the check every second
+      wait_queue = pdMS_TO_TICKS(1000); 
     };
   };
   omTaskDelete();
@@ -313,37 +309,39 @@ void omTaskExec(void *pvParameters)
 
 bool omTaskSuspend()
 {
-  if ((_omTask != NULL) && (eTaskGetState(_omTask) != eSuspended)) {
+  if ((_omTask) && (eTaskGetState(_omTask) != eSuspended)) {
     vTaskSuspend(_omTask);
-    rloga_d("Task [ %s ] has been successfully suspended", omTaskName);
-    return true;
-  }
-  else {
-    rloga_w("Task [ %s ] not found or is already suspended", omTaskName);
-    return false;
+    if (eTaskGetState(_omTask) == eSuspended) {
+      rloga_d("Task [ %s ] has been suspended", omTaskName);
+      return true;
+    } else {
+      rloga_e("Failed to suspend task [ %s ]!", omTaskName);
+    };
   };
+  return false;  
 }
 
 bool omTaskResume()
 {
-  if ((_omTask != NULL) && wifiIsConnected() && (eTaskGetState(_omTask) == eSuspended)) {
+  if ((_omTask) && (eTaskGetState(_omTask) == eSuspended)) {
     vTaskResume(_omTask);
-    rloga_d("Task [ %s ] has been successfully started", omTaskName);
-    return true;
-  }
-  else {
-    rloga_w("Task [ %s ] is not found or is already running", omTaskName);
-    return false;
+    if (eTaskGetState(_omTask) != eSuspended) {
+      rloga_i("Task [ %s ] has been successfully resumed", omTaskName);
+      return true;
+    } else {
+      rloga_e("Failed to resume task [ %s ]!", omTaskName);
+    };
   };
+  return false;  
 }
 
-bool omTaskCreate() 
+bool omTaskCreate(bool createSuspended) 
 {
   if (!_omTask) {
     if (!_omControllers) {
       if (!omControllersInit()) {
         rloga_e("Failed to create a list of controllers!");
-        ledSysStateSet(SYSLED_ERROR, false);
+        eventLoopPostSystem(RE_SYS_ERROR, RE_SYS_SET, false);
         return false;
       };
     };
@@ -357,7 +355,7 @@ bool omTaskCreate()
       if (!_omQueue) {
         omControllersFree();
         rloga_e("Failed to create a queue for sending data to OpenMonitoring!");
-        ledSysStateSet(SYSLED_ERROR, false);
+        eventLoopPostSystem(RE_SYS_ERROR, RE_SYS_SET, false);
         return false;
       };
     };
@@ -371,18 +369,22 @@ bool omTaskCreate()
       vQueueDelete(_omQueue);
       omControllersFree();
       rloga_e("Failed to create task for sending data to OpenMonitoring!");
-      ledSysStateSet(SYSLED_ERROR, false);
+      eventLoopPostSystem(RE_SYS_ERROR, RE_SYS_SET, false);
       return false;
     }
     else {
-      rloga_d("Task [ %s ] has been successfully started", omTaskName);
-      ledSysStateClear(SYSLED_OTHER_PUB_ERROR, false);
-      return true;
+      if (createSuspended) {
+        rloga_i("Task [ %s ] has been successfully created", omTaskName);
+        omTaskSuspend();
+        return omEventHandlerRegister();
+      } else {
+        rloga_i("Task [ %s ] has been successfully started", omTaskName);
+        eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_CLEAR, false);
+        return true;
+      };
     };
-  }
-  else {
-    return omTaskResume();
   };
+  return false;
 }
 
 bool omTaskDelete()
@@ -403,3 +405,22 @@ bool omTaskDelete()
   return true;
 }
 
+// -----------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------- Events handlers ---------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------
+
+static void omWiFiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  if (event_id == RE_WIFI_STA_PING_OK) {
+    if (!_omTask) {
+      omTaskCreate(false);
+    };
+  };
+}
+
+bool omEventHandlerRegister()
+{
+  return eventHandlerRegister(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, &omWiFiEventHandler, nullptr);
+};
+
+#endif // CONFIG_OPENMON_ENABLE

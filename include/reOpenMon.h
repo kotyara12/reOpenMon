@@ -23,11 +23,13 @@ extern "C" {
 
 #define OPENMON_TOKEN_LENGTH 6
 
+bool omControllersInit();
+
 /**
  * EN: Task management: create, suspend, resume and delete
  * RU: Управление задачей: создание, приостановка, восстановление и удаление
  **/
-bool omTaskCreate();
+bool omTaskCreate(bool createSuspended);
 bool omTaskSuspend();
 bool omTaskResume();
 bool omTaskDelete();
@@ -38,8 +40,9 @@ bool omTaskDelete();
  * 
  * @param omId - Controller ID / Идентификатор контроллера
  * @param omKey - Controller token / Токен контроллера
+ * param omInterval - Minimal interval / Минимальный интервал
  **/
-bool omControllerInit(const uint32_t omId, const char * omKey);
+bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t omInterval);
 
 /**
  * EN: Sending data to the specified controller. The fields string will be removed after submission.
@@ -54,6 +57,13 @@ bool omControllerInit(const uint32_t omId, const char * omKey);
  * @param omFields - Data in the format p1=... / Данные в формате p1=...
  **/
 bool omSend(const uint32_t omId, char * omFields);
+
+/**
+ * EN: Registering event handlers in the main event loop
+ * 
+ * RU: Регистрация обработчиков событий в главном цикле событий
+ **/
+bool omEventHandlerRegister();
 
 #ifdef __cplusplus
 }

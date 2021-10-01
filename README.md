@@ -47,7 +47,7 @@ bool omSend(om_ctrl_t * omController, char * fields);
 - https://github.com/kotyara12/rLog
 - https://github.com/kotyara12/rStrings
 - https://github.com/kotyara12/reEsp32
-- https://github.com/kotyara12/reLed
+- https://github.com/kotyara12/reEvents
 - https://github.com/kotyara12/reWiFi
 
 ## Parameters / Параметры:
