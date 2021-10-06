@@ -13,6 +13,7 @@
 #include "esp_http_client.h"
 #include "reWiFi.h"
 #include "reEvents.h"
+#include "reStates.h"
 #include "sys/queue.h"
 
 #define API_OPENMON_HOST "open-monitoring.online"
@@ -166,9 +167,6 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
   };
 
   if (get_request) {
-    // Flashing system LED
-    eventLoopPostSystem(RE_SYS_SYSLED, RE_SYS_FLASH);
-
     // Configuring request parameters
     esp_http_client_config_t cfgHttp;
     memset(&cfgHttp, 0, sizeof(cfgHttp));
@@ -194,6 +192,8 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
           _result = OM_ERROR_API;
           rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
         };
+        // Flashing system LED
+        ledSysActivity();
       }
       else {
         _result = OM_ERROR_HTTP;
