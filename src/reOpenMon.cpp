@@ -13,6 +13,7 @@
 #include "esp_http_client.h"
 #include "reWiFi.h"
 #include "reEvents.h"
+#include "reLed.h"
 #include "reStates.h"
 #include "sys/queue.h"
 
