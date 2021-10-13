@@ -16,6 +16,7 @@
 #include "reLed.h"
 #include "reStates.h"
 #include "sys/queue.h"
+#include "def_consts.h"
 
 #define API_OPENMON_HOST "open-monitoring.online"
 #define API_OPENMON_PORT 80

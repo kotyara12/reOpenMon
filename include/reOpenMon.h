@@ -16,6 +16,7 @@
 #include "freertos/queue.h" 
 #include "freertos/semphr.h" 
 #include "project_config.h"
+#include "def_consts.h"
 
 #ifdef __cplusplus
 extern "C" {
