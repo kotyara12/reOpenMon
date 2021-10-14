@@ -22,7 +22,6 @@
 #define API_OPENMON_PORT 80
 #define API_OPENMON_SEND_PATH "/get"
 #define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
-#define API_OPENMON_CHECK_INTERVAL 1000
 
 typedef enum {
   OM_OK         = 0,
@@ -55,7 +54,7 @@ TaskHandle_t _omTask;
 QueueHandle_t _omQueue = nullptr;
 omHeadHandle_t _omControllers = nullptr;
 
-static const char* logTAG = "OpenMon";
+static const char* logTAG = "OpMn";
 static const char* omTaskName = "open_mon";
 
 #if CONFIG_OPENMON_STATIC_ALLOCATION
@@ -71,7 +70,7 @@ uint8_t _omQueueStorage [CONFIG_OPENMON_QUEUE_SIZE * OPENMON_QUEUE_ITEM_SIZE];
 
 bool omControllersInit()
 {
-  _omControllers = new omHead_t;
+  _omControllers = (omHead_t*)calloc(1, sizeof(omHead_t));
   if (_omControllers) {
     SLIST_INIT(_omControllers);
   };
@@ -89,7 +88,7 @@ bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t om
     return false;
   };
     
-  omControllerHandle_t ctrl = new omController_t;
+  omControllerHandle_t ctrl = (omController_t*)calloc(1, sizeof(omController_t));
   if (!ctrl) {
     rlog_e(logTAG, "Memory allocation error for data structure!");
     return false;
@@ -127,9 +126,9 @@ void omControllersFree()
   SLIST_FOREACH_SAFE(item, _omControllers, next, tmp) {
     SLIST_REMOVE(_omControllers, item, omController_t, next);
     if (item->data) free(item->data);
-    delete item;
+    free(item);
   };
-  delete _omControllers;
+  free(_omControllers);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------
@@ -140,7 +139,6 @@ bool omSend(const uint32_t omId, char * omFields)
 {
   if (_omQueue) {
     omQueueItem_t* item = (omQueueItem_t*)calloc(1, sizeof(omQueueItem_t));
-    // omQueueItem_t * item = new omQueueItem_t;
     if (item) {
       item->id = omId;
       item->data = omFields;

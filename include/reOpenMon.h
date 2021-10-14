@@ -41,7 +41,7 @@ bool omTaskDelete();
  * 
  * @param omId - Controller ID / Идентификатор контроллера
  * @param omKey - Controller token / Токен контроллера
- * param omInterval - Minimal interval / Минимальный интервал
+ * @param omInterval - Minimal interval / Минимальный интервал
  **/
 bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t omInterval);
 
