@@ -221,7 +221,8 @@ void omTaskExec(void *pvParameters)
   omControllerHandle_t ctrl = nullptr;
   TickType_t wait_queue = portMAX_DELAY;
   static omSendStatus_t send_status = OM_ERROR_HTTP;
-  static omSendStatus_t last_status = OM_ERROR_HTTP;
+  static uint32_t send_errors = 0;
+  static time_t time_first_error = 0;
   
   while (true) {
     // Receiving new data
@@ -245,7 +246,7 @@ void omTaskExec(void *pvParameters)
     };
 
     // Check internet availability 
-    if (wifiIsConnected()) {
+    if (statesInetIsAvailabled()) {
       ctrl = nullptr;
       wait_queue = portMAX_DELAY;
       SLIST_FOREACH(ctrl, _omControllers, next) {
@@ -256,17 +257,26 @@ void omTaskExec(void *pvParameters)
             ctrl->attempt++;
             send_status = omSendEx(ctrl);
             if (send_status == OM_OK) {
+              // Calculate the time of the next dispatch in the given controller
               ctrl->next_send = xTaskGetTickCount() + ctrl->interval;
               ctrl->attempt = 0;
               if (ctrl->data) {
                 free(ctrl->data);
                 ctrl->data = nullptr;
               };
-              if (last_status != send_status) {
-                last_status = send_status;
-                eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_CLEAR, false);
+              // If the error counter exceeds the threshold, then a notification has been sent - send a recovery notification
+              if (send_errors >= CONFIG_OPENMON_ERROR_LIMIT) {
+                eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_CLEAR, false, time_first_error);
               };
+              time_first_error = 0;
+              send_errors = 0;
             } else {
+              // Increase the number of errors in a row and fix the time of the first error
+              send_errors++;
+              if (time_first_error == 0) {
+                time_first_error = time(nullptr);
+              };
+              // Calculate the time of the next dispatch in the given controller
               ctrl->next_send = xTaskGetTickCount() + pdMS_TO_TICKS(CONFIG_OPENMON_ERROR_INTERVAL);
               if (ctrl->attempt >= CONFIG_OPENMON_MAX_ATTEMPTS) {
                 ctrl->attempt = 0;
@@ -276,9 +286,9 @@ void omTaskExec(void *pvParameters)
                 };
                 rlog_e(logTAG, "Failed to send data to controller #%d!", ctrl->id);
               };
-              if (last_status != send_status) {
-                last_status = send_status;
-                eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_SET, false);
+              // If the error counter has reached the threshold, send a notification
+              if (send_errors == CONFIG_OPENMON_ERROR_LIMIT) {
+                eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_SET, false, time_first_error);
               };
             };
           };
