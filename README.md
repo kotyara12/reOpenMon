@@ -10,8 +10,7 @@
 
 ## Using / Использование:
 
-**EN**: _Task management: create, suspend, resume and delete_
-
+**EN**: _Task management: create, suspend, resume and delete_<br/>
 **RU**: _Управление задачей: создание, приостановка, восстановление и удаление_
 
 ```
