@@ -11,17 +11,19 @@
 
 ## Using / Использование:
 
-**EN**: _Task management: create, suspend, resume and delete_<br/>
-**RU**: _Управление задачей: создание, приостановка, восстановление и удаление_<br/>
+**EN**: ***Task management: create, suspend, resume and delete***<br/>
+**RU**: ***Управление задачей: создание, приостановка, восстановление и удаление***<br/>
 ```
-bool omTaskCreate();
+// @param createSuspended - Create but do not run a task / Создать, но не запускать задачу
+
+bool omTaskCreate(bool createSuspended);
 bool omTaskSuspend();
 bool omTaskResume();
 bool omTaskDelete();
 ```
 
-**EN**: _Controller initialization_<br/>
-**RU**: _Создание контроллера_<br/>
+**EN**: ***Controller initialization***<br/>
+**RU**: ***Создание контроллера***<br/>
 ```
 // @param om_id - Controller ID / Идентификатор контроллера
 // @param om_key - Controller token / Токен контроллера
@@ -29,22 +31,22 @@ bool omTaskDelete();
 om_ctrl_t * omInitController(const uint32_t om_id, const char * om_key);
 ```
 
-<i>// Removing a controller and free resources</i><br/>
-<i>// Удаление контроллера и освобождение ресурсов</i><br/>
-
+**EN**: ***Removing a controller and free resources***<br/>
+**RU**: ***Удаление контроллера и освобождение ресурсов***<br/>
+```
 void omFreeController(om_ctrl_t * omController);
+```
 
-<i>// Sending data to the specified controller. The fields string will be removed after submission.</i><br/>
-<i>// If little time has passed since the last data sent to the controller, the data will be queued.</i><br/>
-<i>// If there is already data in the queue for this controller, it will be overwritten with new data.</i><br/>
+**EN**: ***Sending data to the specified controller***<br/>
+_If little time has passed since the last data sent to the controller, the data will be queued. If there is already data in the queue for this controller, it will be overwritten with new data_<br/>
+**RU**: ***Отправка данных в заданный контроллер***<br/>
+_Если с момента последней отправки данных в контроллер прошло мало времени, то данные будут поставлены в очередь. Если в очереди на данный контроллер уже есть данные, то они будут перезаписаны новыми данными_<br/>
+```
+// @param omId - Controller ID / Идентификатор контроллера
+// @param omFields - Data in the format p1=VALUE1&p2=VALUE2&p3=VALUE3... / Данные в формате p1=ЗНАЧ1&p2=ЗНАЧ2&p3=ЗНАЧ3...
 
-<i>// Отправка данных в заданный контроллер. Строка fields будет удалена после отправки. </i><br/>
-<i>// Если с момента последней отправки данных в контроллер прошло мало времени, то данные будут поставлены в очередь.</i><br/>
-<i>// Если в очереди на данный контроллер уже есть данные, то они будут перезаписаны новыми данными.</i><br/>
-<i>// @param omController - Pointer to controller from omInitController / Указатель на контроллер из omInitController </i><br/>
-<i>// @param fields - Data in the format p1=... / Данные в формате p1=...</i><br/>
-
-bool omSend(om_ctrl_t * omController, char * fields);
+bool omSend(const uint32_t omId, char * omFields);
+```
 
 ## Dependencies / Зависимости:
 - esp_http_client.h (ESP-IDF)
