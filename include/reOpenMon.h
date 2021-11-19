@@ -55,7 +55,7 @@ bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t om
  * Если в очереди на данный контроллер уже есть данные, то они будут перезаписаны новыми данными.
  * 
  * @param omId - Controller ID / Идентификатор контроллера
- * @param omFields - Data in the format p1=... / Данные в формате p1=...
+ * @param omFields - Data in the format p1=VALUE1&p2=VALUE2&p3=VALUE3... / Данные в формате p1=ЗНАЧ1&p2=ЗНАЧ2&p3=ЗНАЧ3...
  **/
 bool omSend(const uint32_t omId, char * omFields);
 
