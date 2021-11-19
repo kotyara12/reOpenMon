@@ -1,12 +1,12 @@
 # reOpenMon for ESP32
 
-<b>EN</b>: Sending sensor data to http://open-monitoring.online/ with a specified interval and sending queue. For ESP32 only, since it was released as a FreeRTOS task and on ESP32-specific functions. Controller field values (data) are passed to the queue as a string (char*), which is automatically deleted after sending. That is, to send, you must place a line with data on the heap, and then send it to the library queue.
+**EN**: Sending sensor data to http://open-monitoring.online/ with a specified interval and sending queue. For ESP32 only, since it was released as a FreeRTOS task and on ESP32-specific functions. Controller field values (data) are passed to the queue as a string (char*), which is automatically deleted after sending. That is, to send, you must place a line with data on the heap, and then send it to the library queue.
 
-Controller parameters must be set in "project_config.h" (see below for description)
+> Controller parameters must be set in "project_config.h" (see below for description)
 
-<b>RU</b>: Отправка данных сенсоров на http://open-monitoring.online/ с заданным интервалом и очередью отправки. Только для ESP32, так как релизовано в виде задачи FreeRTOS и на специфических для ESP32 функциях. Значения полей контроллера (данные) передаются в очередь в виде строки (char*), которая автоматически удаляется после отправки. То есть для отправки Вы должны разместить в куче строку с данными, а затем отправить ее в очередь библиотеки.
+**RU**: Отправка данных сенсоров на http://open-monitoring.online/ с заданным интервалом и очередью отправки. Только для ESP32, так как релизовано в виде задачи FreeRTOS и на специфических для ESP32 функциях. Значения полей контроллера (данные) передаются в очередь в виде строки (char*), которая автоматически удаляется после отправки. То есть для отправки Вы должны разместить в куче строку с данными, а затем отправить ее в очередь библиотеки.
 
-Параметры контроллера должны быть заданы в "project_config.h" (описание см. ниже)
+> Параметры контроллера должны быть заданы в "project_config.h" (описание см. ниже)
 
 ## Using / Использование:
 
