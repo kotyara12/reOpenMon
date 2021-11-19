@@ -10,13 +10,16 @@
 
 ## Using / Использование:
 
-<i>// Task management: create, suspend, resume and delete</i><br/>
-<i>// Управление задачей: создание, приостановка, восстановление и удаление</i><br/>
+**EN**: _Task management: create, suspend, resume and delete_
 
+**RU**: _Управление задачей: создание, приостановка, восстановление и удаление_
+
+```
 bool omTaskCreate();
 bool omTaskSuspend();
 bool omTaskResume();
 bool omTaskDelete();
+```
 
 <i>// Controller initialization</i><br/>
 <i>// Создание контроллера.</i><br/>
