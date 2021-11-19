@@ -12,8 +12,7 @@
 ## Using / Использование:
 
 **EN**: _Task management: create, suspend, resume and delete_<br/>
-**RU**: _Управление задачей: создание, приостановка, восстановление и удаление_
-
+**RU**: _Управление задачей: создание, приостановка, восстановление и удаление_<br/>
 ```
 bool omTaskCreate();
 bool omTaskSuspend();
@@ -21,12 +20,14 @@ bool omTaskResume();
 bool omTaskDelete();
 ```
 
-<i>// Controller initialization</i><br/>
-<i>// Создание контроллера.</i><br/>
-<i>// @param om_id - Controller ID / Идентификатор контроллера</i><br/>
-<i>// @param om_key - Controller token / Токен контроллера</i><br/>
+**EN**: _Controller initialization_<br/>
+**RU**: _Создание контроллера_<br/>
+```
+// @param om_id - Controller ID / Идентификатор контроллера
+// @param om_key - Controller token / Токен контроллера
 
 om_ctrl_t * omInitController(const uint32_t om_id, const char * om_key);
+```
 
 <i>// Removing a controller and free resources</i><br/>
 <i>// Удаление контроллера и освобождение ресурсов</i><br/>
