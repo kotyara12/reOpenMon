@@ -48,8 +48,8 @@ _Если с момента последней отправки данных в 
 bool omSend(const uint32_t omId, char * omFields);
 ```
 
-**EN**: ***Registering event handlers in the main event loop***
-**RU**: ***Регистрация обработчиков событий в главном цикле событий***
+**EN**: ***Registering event handlers in the main event loop***<br/>
+**RU**: ***Регистрация обработчиков событий в главном цикле событий***<br/>
 ```
 bool omEventHandlerRegister();
 ```
