@@ -15,6 +15,7 @@
 #include "reEvents.h"
 #include "reLed.h"
 #include "reStates.h"
+#include "reEsp32.h"
 #include "sys/queue.h"
 #include "def_consts.h"
 
@@ -70,7 +71,7 @@ uint8_t _omQueueStorage [CONFIG_OPENMON_QUEUE_SIZE * OPENMON_QUEUE_ITEM_SIZE];
 
 bool omControllersInit()
 {
-  _omControllers = (omHead_t*)calloc(1, sizeof(omHead_t));
+  _omControllers = (omHead_t*)esp_calloc(1, sizeof(omHead_t));
   if (_omControllers) {
     SLIST_INIT(_omControllers);
   };
@@ -88,7 +89,7 @@ bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t om
     return false;
   };
     
-  omControllerHandle_t ctrl = (omController_t*)calloc(1, sizeof(omController_t));
+  omControllerHandle_t ctrl = (omController_t*)esp_calloc(1, sizeof(omController_t));
   if (!ctrl) {
     rlog_e(logTAG, "Memory allocation error for data structure!");
     return false;
@@ -138,7 +139,7 @@ void omControllersFree()
 bool omSend(const uint32_t omId, char * omFields)
 {
   if (_omQueue) {
-    omQueueItem_t* item = (omQueueItem_t*)calloc(1, sizeof(omQueueItem_t));
+    omQueueItem_t* item = (omQueueItem_t*)esp_calloc(1, sizeof(omQueueItem_t));
     if (item) {
       item->id = omId;
       item->data = omFields;
