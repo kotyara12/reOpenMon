@@ -429,9 +429,22 @@ static void omWiFiEventHandler(void* arg, esp_event_base_t event_base, int32_t e
   };
 }
 
+static void omOtaEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+{
+  if ((event_id == RE_SYS_OTA) && (event_data)) {
+    re_system_event_data_t* data = (re_system_event_data_t*)event_data;
+    if (data->type == RE_SYS_SET) {
+      omTaskSuspend();
+    } else {
+      omTaskResume();
+    };
+  };
+}
+
 bool omEventHandlerRegister()
 {
-  return eventHandlerRegister(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, &omWiFiEventHandler, nullptr);
+  return eventHandlerRegister(RE_WIFI_EVENTS, RE_WIFI_STA_PING_OK, &omWiFiEventHandler, nullptr)
+      && eventHandlerRegister(RE_SYSTEM_EVENTS, RE_SYS_OTA, &omOtaEventHandler, nullptr);
 };
 
 #endif // CONFIG_OPENMON_ENABLE
