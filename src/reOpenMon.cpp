@@ -194,7 +194,9 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
           rlog_e(logTAG, "Failed to send message, API error code: #%d!", retCode);
         };
         // Flashing system LED
+        #if CONFIG_SYSLED_SEND_ACTIVITY
         ledSysActivity();
+        #endif // CONFIG_SYSLED_SEND_ACTIVITY
       }
       else {
         _result = OM_ERROR_HTTP;
