@@ -389,12 +389,12 @@ bool omTaskCreate(bool createSuspended)
       if (createSuspended) {
         rloga_i("Task [ %s ] has been successfully created", omTaskName);
         omTaskSuspend();
-        return omEventHandlerRegister();
+        eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_SET, false);
       } else {
         rloga_i("Task [ %s ] has been successfully started", omTaskName);
         eventLoopPostSystem(RE_SYS_OPENMON_ERROR, RE_SYS_CLEAR, false);
-        return true;
       };
+      return omEventHandlerRegister();
     };
   };
   return false;
@@ -425,9 +425,7 @@ bool omTaskDelete()
 static void omWiFiEventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
   if (event_id == RE_WIFI_STA_PING_OK) {
-    if (!_omTask) {
-      omTaskCreate(false);
-    };
+    omTaskResume();
   };
 }
 
