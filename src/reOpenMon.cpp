@@ -23,6 +23,7 @@
 #define API_OPENMON_PORT 80
 #define API_OPENMON_SEND_PATH "/get"
 #define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
+#define API_OPENMON_TIMEOUT_MS 30000
 
 typedef enum {
   OM_OK         = 0,
@@ -36,7 +37,7 @@ typedef struct omController_t {
   uint32_t interval;
   TickType_t next_send;
   uint8_t attempt;
-  char* data;
+  char* fields;
   SLIST_ENTRY(omController_t) next;
 } omController_t;
 typedef struct omController_t *omControllerHandle_t;
@@ -104,7 +105,7 @@ bool omControllerInit(const uint32_t omId, const char * omKey, const uint32_t om
   };
   ctrl->next_send = 0;
   ctrl->attempt = 0;
-  ctrl->data = nullptr;
+  ctrl->fields = nullptr;
   SLIST_NEXT(ctrl, next) = nullptr;
   SLIST_INSERT_HEAD(_omControllers, ctrl, next);
   return true;
@@ -126,7 +127,7 @@ void omControllersFree()
   omControllerHandle_t item, tmp;
   SLIST_FOREACH_SAFE(item, _omControllers, next, tmp) {
     SLIST_REMOVE(_omControllers, item, omController_t, next);
-    if (item->data) free(item->data);
+    if (item->fields) free(item->fields);
     free(item);
   };
   free(_omControllers);
@@ -163,8 +164,8 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
   char* get_request = nullptr;
 
   // Create the text of the GET request
-  if (ctrl->data) {
-    get_request = malloc_stringf(API_OPENMON_SEND_VALUES, ctrl->id, ctrl->key, ctrl->data);
+  if (ctrl->fields) {
+    get_request = malloc_stringf(API_OPENMON_SEND_VALUES, ctrl->id, ctrl->key, ctrl->fields);
   };
 
   if (get_request) {
@@ -175,6 +176,7 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
     cfgHttp.host = API_OPENMON_HOST;
     cfgHttp.port = API_OPENMON_PORT;
     cfgHttp.path = API_OPENMON_SEND_PATH;
+    cfgHttp.timeout_ms = API_OPENMON_TIMEOUT_MS;
     cfgHttp.query = get_request;
     cfgHttp.use_global_ca_store = false;
     cfgHttp.transport_type = HTTP_TRANSPORT_OVER_TCP;
@@ -186,7 +188,7 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
       esp_err_t err = esp_http_client_perform(client);
       if (err == ESP_OK) {
         int retCode = esp_http_client_get_status_code(client);
-        if ((retCode == 200) || (retCode == 301)) {
+        if ((retCode >= HttpStatus_Ok) && (retCode <= HttpStatus_BadRequest)) {
           _result = OM_OK;
           rlog_i(logTAG, "Data sent # %d: %s", ctrl->id, get_request);
         } else {
@@ -233,12 +235,10 @@ void omTaskExec(void *pvParameters)
       ctrl = omControllerFind(item->id);
       if (ctrl) {
         // Replacing controller data with new ones from the transporter
-        if (item->data) {
-          ctrl->attempt = 0;
-          if (ctrl->data) free(ctrl->data);
-          ctrl->data = item->data;
-          item->data = nullptr;
-        };
+        ctrl->attempt = 0;
+        if (ctrl->fields) free(ctrl->fields);
+        ctrl->fields = item->data;
+        item->data = nullptr;
       } else {
         rlog_e(logTAG, "Controller # %d not found!", item->id);
       };
@@ -254,7 +254,7 @@ void omTaskExec(void *pvParameters)
       wait_queue = portMAX_DELAY;
       SLIST_FOREACH(ctrl, _omControllers, next) {
         // Sending data
-        if (ctrl->data) {
+        if (ctrl->fields) {
           if (ctrl->next_send < xTaskGetTickCount()) {
             // Attempt to send data
             ctrl->attempt++;
@@ -263,9 +263,9 @@ void omTaskExec(void *pvParameters)
               // Calculate the time of the next dispatch in the given controller
               ctrl->next_send = xTaskGetTickCount() + ctrl->interval;
               ctrl->attempt = 0;
-              if (ctrl->data) {
-                free(ctrl->data);
-                ctrl->data = nullptr;
+              if (ctrl->fields) {
+                free(ctrl->fields);
+                ctrl->fields = nullptr;
               };
               // If the error counter exceeds the threshold, then a notification has been sent - send a recovery notification
               if (send_errors >= CONFIG_OPENMON_ERROR_LIMIT) {
@@ -280,13 +280,15 @@ void omTaskExec(void *pvParameters)
                 time_first_error = time(nullptr);
               };
               // Calculate the time of the next dispatch in the given controller
-              ctrl->next_send = xTaskGetTickCount() + pdMS_TO_TICKS(CONFIG_OPENMON_ERROR_INTERVAL);
-              if (ctrl->attempt >= CONFIG_OPENMON_MAX_ATTEMPTS) {
-                ctrl->attempt = 0;
-                if (ctrl->data) {
-                  free(ctrl->data);
-                  ctrl->data = nullptr;
+              if (ctrl->attempt < CONFIG_OPENMON_MAX_ATTEMPTS) {
+                ctrl->next_send = xTaskGetTickCount() + pdMS_TO_TICKS(CONFIG_OPENMON_ERROR_INTERVAL);
+              } else {
+                if (ctrl->fields) {
+                  free(ctrl->fields);
+                  ctrl->fields = nullptr;
                 };
+                ctrl->next_send = xTaskGetTickCount() + ctrl->interval;
+                ctrl->attempt = 0;
                 rlog_e(logTAG, "Failed to send data to controller #%d!", ctrl->id);
               };
               // If the error counter has reached the threshold, send a notification
@@ -297,10 +299,14 @@ void omTaskExec(void *pvParameters)
           };
 
           // Find the minimum delay before the next sending to the controller
-          if (ctrl->data) {
+          if (ctrl->fields) {
             TickType_t send_delay = 0;
             if (ctrl->next_send > xTaskGetTickCount()) {
               send_delay = ctrl->next_send - xTaskGetTickCount();
+            };
+            if (send_delay > ctrl->interval) {
+              ctrl->next_send = xTaskGetTickCount() + ctrl->interval;
+              send_delay = ctrl->interval;
             };
             if (send_delay < wait_queue) {
               wait_queue = send_delay;
