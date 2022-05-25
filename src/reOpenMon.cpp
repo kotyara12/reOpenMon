@@ -20,7 +20,7 @@
 #include "def_consts.h"
 
 #define API_OPENMON_HOST "open-monitoring.online"
-#define API_OPENMON_PORT 80
+#define API_OPENMON_PORT 443
 #define API_OPENMON_SEND_PATH "/get"
 #define API_OPENMON_SEND_VALUES "cid=%d&key=%s&%s"
 #define API_OPENMON_TIMEOUT_MS 30000
@@ -178,8 +178,8 @@ omSendStatus_t omSendEx(const omControllerHandle_t ctrl)
     cfgHttp.path = API_OPENMON_SEND_PATH;
     cfgHttp.timeout_ms = API_OPENMON_TIMEOUT_MS;
     cfgHttp.query = get_request;
-    cfgHttp.use_global_ca_store = false;
-    cfgHttp.transport_type = HTTP_TRANSPORT_OVER_TCP;
+    cfgHttp.use_global_ca_store = true;
+    cfgHttp.transport_type = HTTP_TRANSPORT_OVER_SSL;
     cfgHttp.is_async = false;
 
     // Make a request to the API
